@@ -67,7 +67,7 @@ module aes_sbox(
     );
 
 always_comb 
-	case(a)		// synopsys full_case parallel_case
+	unique case(a)		
 	   8'h00: d=8'h63;
 	   8'h01: d=8'h7c;
 	   8'h02: d=8'h77;

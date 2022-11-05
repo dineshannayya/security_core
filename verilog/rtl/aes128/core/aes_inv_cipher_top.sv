@@ -38,6 +38,9 @@
             1. To reduce the design area 
                A. aes_sbox used sequentially for 16 cycle for text compuation 
                B. 4 cycle for next round key computation
+     0.2  - Nov 5, 2022
+            A. Added 4 cycle pipe line mix column function -
+            B. Moved all the counter and control to FSM logic
            
                                                               
 ************************************************************************************/
@@ -79,6 +82,13 @@ module aes_inv_cipher_top(
         output logic [127:0] text_out 
       );
 
+parameter IDLE        = 3'b000;
+parameter KEY_DONE    = 3'b001;
+parameter SBOX_DONE   = 3'b010;
+parameter MIX_DONE    = 3'b011;
+parameter NEXT_ROUND  = 3'b100;
+parameter WAIT_LD     = 3'b101;
+
 ////////////////////////////////////////////////////////////////////
 //
 // Local Wires
@@ -86,7 +96,6 @@ module aes_inv_cipher_top(
 
 wire	[31:0]	wk0, wk1, wk2, wk3;
 reg	[31:0]	w0, w1, w2, w3;
-reg	[127:0]	text_in_r;
 reg	[7:0]	sa00, sa01, sa02, sa03;
 reg	[7:0]	sa10, sa11, sa12, sa13;
 reg	[7:0]	sa20, sa21, sa22, sa23;
@@ -107,64 +116,134 @@ wire	[7:0]	sa00_ark, sa01_ark, sa02_ark, sa03_ark;
 wire	[7:0]	sa10_ark, sa11_ark, sa12_ark, sa13_ark;
 wire	[7:0]	sa20_ark, sa21_ark, sa22_ark, sa23_ark;
 wire	[7:0]	sa30_ark, sa31_ark, sa32_ark, sa33_ark;
-reg		ld_r, active;
-reg	[3:0]	dcnt;
-reg [3:0]   scnt; // Step count, number step/cycle need to complete one round
-reg         nxt_step;
-wire        key_rdy;
+wire            key_rdy;
+logic 		    ld_r;
+logic 	[3:0]   dcnt;
+logic  [3:0]    scnt; // Step count, number step/cycle need to complete one round
+logic  [1:0]    mcnt; // Mix count, number cycle need to complete column mix
+logic  [3:0]    kcnt; // Next Key 
+logic           active_s; // indicate active sbox phase
+logic           active_m; // indicate active mix phase
+logic           active_k; // indicate active mix phase
+logic           nxt_step;
+logic           done_pre;
+logic [2:0]     state;
+
+
+always @(posedge clk or negedge rstn) begin
+   if(!rstn) begin
+       done     <= 1'b0;
+       done_pre <= 1'b0; 
+       dcnt     <= 4'h0;
+       kcnt     <= 4'h0;
+       scnt     <= 4'h0;
+       mcnt     <= 2'h0;
+       active_k <= 1'b0;
+       active_s <= 1'b0;
+       active_m <= 1'b0;
+       nxt_step <= 1'b0;
+       kdone    <= 1'b0;
+       state    <= IDLE;
+   end else begin
+      case(state)
+      IDLE: begin
+           done     <= done_pre; // Generate One cycle delayed
+           done_pre <= 1'b0; 
+           if(kld) begin
+              dcnt     <= 4'h0;
+              kcnt     <= 4'ha;
+              active_k <= 1'b1;
+              state    <= KEY_DONE;
+           end
+        end
+      // Wait for all Key generation 
+      // Note: Decription uses last Key first
+      KEY_DONE: begin
+	       if(key_rdy)	begin
+              if(kcnt == 0) begin
+                 kdone    <= 1'b1;
+                 dcnt     <= 4'h0;
+                 active_k <= 1'b0;
+                 state    <= WAIT_LD;
+              end else begin
+                 kcnt <= kcnt - 4'h1;
+              end
+           end
+        end
+      WAIT_LD: begin
+          kdone    <= 1'b0;
+          if(ld) begin
+             state     <= NEXT_ROUND;
+          end
+      end
+      NEXT_ROUND: begin
+           nxt_step  <= 0;
+           if(dcnt == 4'ha) begin 
+              done_pre <= 1;
+              state    <= IDLE;
+           end else begin
+              scnt      <= 4'h0;
+              active_s  <= 1'b1;
+              dcnt     <= dcnt + 4'h1;
+              state    <= SBOX_DONE;
+           end
+      end
+      SBOX_DONE: begin
+           nxt_step <= 1'b0;
+           if(scnt == 4'hF) begin
+              active_s  <= 1'b0;
+              active_m  <= 1'b1;
+              mcnt      <= 2'h0;
+              state     <= MIX_DONE;
+           end else begin
+              scnt <= scnt + 1;
+           end
+        end
+      MIX_DONE: begin
+           if(mcnt == 2'h3) begin
+              nxt_step  <= 1;
+              active_s  <= 1'b0;
+              active_m  <= 1'b0;
+              state     <= NEXT_ROUND;
+           end else begin
+              mcnt <= mcnt + 1;
+           end
+      end
+      endcase
+   end
+end
+        
+
 
 ////////////////////////////////////////////////////////////////////
 //
 // Misc Logic
 //
 
-always @(posedge clk)
-if(!rstn)	begin
-   dcnt <= #1 4'h0;
-   nxt_step <= 1'b0;
-end else begin
-   if(done)	begin
-      dcnt <= #1 4'h0;
-   end else if(ld) begin
-      dcnt <= #1 4'h1;
-   end else if(active && (&scnt)) begin		
-      dcnt <= #1 dcnt + 4'h1;
-   end
-   nxt_step  <= (scnt == 4'hF);
-end
-
-always @(posedge clk)	done <= (dcnt==4'hb) & nxt_step;
-
-always @(posedge clk)
-	if(!rstn)	    active <= #1 1'b0;
-	else if(ld)		active <= #1 1'b1;
-	else if(done)	active <= #1 1'b0;
-
-always @(posedge clk)	if(ld)	text_in_r <= #1 text_in;
-
 always @(posedge clk)	ld_r <= #1 ld;
+
 
 ////////////////////////////////////////////////////////////////////
 //
 // Initial Permutation
 //
 
-always @(posedge clk)	sa33 <= #1 ld_r ? text_in_r[007:000] ^ w3[07:00] : (nxt_step) ? sa33_next :sa33  ;
-always @(posedge clk)	sa23 <= #1 ld_r ? text_in_r[015:008] ^ w3[15:08] : (nxt_step) ? sa23_next :sa23  ;
-always @(posedge clk)	sa13 <= #1 ld_r ? text_in_r[023:016] ^ w3[23:16] : (nxt_step) ? sa13_next :sa13  ;
-always @(posedge clk)	sa03 <= #1 ld_r ? text_in_r[031:024] ^ w3[31:24] : (nxt_step) ? sa03_next :sa03  ;
-always @(posedge clk)	sa32 <= #1 ld_r ? text_in_r[039:032] ^ w2[07:00] : (nxt_step) ? sa32_next :sa32  ;
-always @(posedge clk)	sa22 <= #1 ld_r ? text_in_r[047:040] ^ w2[15:08] : (nxt_step) ? sa22_next :sa22  ;
-always @(posedge clk)	sa12 <= #1 ld_r ? text_in_r[055:048] ^ w2[23:16] : (nxt_step) ? sa12_next :sa12  ;
-always @(posedge clk)	sa02 <= #1 ld_r ? text_in_r[063:056] ^ w2[31:24] : (nxt_step) ? sa02_next :sa02  ;
-always @(posedge clk)	sa31 <= #1 ld_r ? text_in_r[071:064] ^ w1[07:00] : (nxt_step) ? sa31_next :sa31  ;
-always @(posedge clk)	sa21 <= #1 ld_r ? text_in_r[079:072] ^ w1[15:08] : (nxt_step) ? sa21_next :sa21  ;
-always @(posedge clk)	sa11 <= #1 ld_r ? text_in_r[087:080] ^ w1[23:16] : (nxt_step) ? sa11_next :sa11  ;
-always @(posedge clk)	sa01 <= #1 ld_r ? text_in_r[095:088] ^ w1[31:24] : (nxt_step) ? sa01_next :sa01  ;
-always @(posedge clk)	sa30 <= #1 ld_r ? text_in_r[103:096] ^ w0[07:00] : (nxt_step) ? sa30_next :sa30  ;
-always @(posedge clk)	sa20 <= #1 ld_r ? text_in_r[111:104] ^ w0[15:08] : (nxt_step) ? sa20_next :sa20  ;
-always @(posedge clk)	sa10 <= #1 ld_r ? text_in_r[119:112] ^ w0[23:16] : (nxt_step) ? sa10_next :sa10  ;
-always @(posedge clk)	sa00 <= #1 ld_r ? text_in_r[127:120] ^ w0[31:24] : (nxt_step) ? sa00_next :sa00  ;
+always @(posedge clk)	sa33 <= #1 ld_r ? text_in[007:000] ^ w3[07:00] : (nxt_step) ? sa33_next :sa33  ;
+always @(posedge clk)	sa23 <= #1 ld_r ? text_in[015:008] ^ w3[15:08] : (nxt_step) ? sa23_next :sa23  ;
+always @(posedge clk)	sa13 <= #1 ld_r ? text_in[023:016] ^ w3[23:16] : (nxt_step) ? sa13_next :sa13  ;
+always @(posedge clk)	sa03 <= #1 ld_r ? text_in[031:024] ^ w3[31:24] : (nxt_step) ? sa03_next :sa03  ;
+always @(posedge clk)	sa32 <= #1 ld_r ? text_in[039:032] ^ w2[07:00] : (nxt_step) ? sa32_next :sa32  ;
+always @(posedge clk)	sa22 <= #1 ld_r ? text_in[047:040] ^ w2[15:08] : (nxt_step) ? sa22_next :sa22  ;
+always @(posedge clk)	sa12 <= #1 ld_r ? text_in[055:048] ^ w2[23:16] : (nxt_step) ? sa12_next :sa12  ;
+always @(posedge clk)	sa02 <= #1 ld_r ? text_in[063:056] ^ w2[31:24] : (nxt_step) ? sa02_next :sa02  ;
+always @(posedge clk)	sa31 <= #1 ld_r ? text_in[071:064] ^ w1[07:00] : (nxt_step) ? sa31_next :sa31  ;
+always @(posedge clk)	sa21 <= #1 ld_r ? text_in[079:072] ^ w1[15:08] : (nxt_step) ? sa21_next :sa21  ;
+always @(posedge clk)	sa11 <= #1 ld_r ? text_in[087:080] ^ w1[23:16] : (nxt_step) ? sa11_next :sa11  ;
+always @(posedge clk)	sa01 <= #1 ld_r ? text_in[095:088] ^ w1[31:24] : (nxt_step) ? sa01_next :sa01  ;
+always @(posedge clk)	sa30 <= #1 ld_r ? text_in[103:096] ^ w0[07:00] : (nxt_step) ? sa30_next :sa30  ;
+always @(posedge clk)	sa20 <= #1 ld_r ? text_in[111:104] ^ w0[15:08] : (nxt_step) ? sa20_next :sa20  ;
+always @(posedge clk)	sa10 <= #1 ld_r ? text_in[119:112] ^ w0[23:16] : (nxt_step) ? sa10_next :sa10  ;
+always @(posedge clk)	sa00 <= #1 ld_r ? text_in[127:120] ^ w0[31:24] : (nxt_step) ? sa00_next :sa00  ;
 
 ////////////////////////////////////////////////////////////////////
 //
@@ -203,32 +282,65 @@ assign sa30_ark = sa30_sub ^ w0[07:00];
 assign sa31_ark = sa31_sub ^ w1[07:00];
 assign sa32_ark = sa32_sub ^ w2[07:00];
 assign sa33_ark = sa33_sub ^ w3[07:00];
+
+//------------------------------------------------------------------------------------
+// To Reduce the total area of the aes, we have divided the mix_col access to 4 cycle
+//------------------------------------------------------------------------------------
+logic [31:0] mcol_arry[0:3];
+logic [31:0] mcol_in;
+logic [31:0] mcol_out;
+
+always @(posedge clk)
+begin
+   if(active_m)
+      mcol_arry[mcnt] <=  mcol_out;
+end
+always_comb
+begin
+  mcol_in = 0;
+  case(mcnt)
+  'h0:  mcol_in = {sa00_ark,sa10_ark,sa20_ark,sa30_ark};
+  'h1:  mcol_in = {sa01_ark,sa11_ark,sa21_ark,sa31_ark};
+  'h2:  mcol_in = {sa02_ark,sa12_ark,sa22_ark,sa32_ark};
+  'h3:  mcol_in = {sa03_ark,sa13_ark,sa23_ark,sa33_ark};
+  endcase
+end
+
+assign mcol_out = inv_mix_col(mcol_in[31:24],mcol_in[23:16],mcol_in[15:8],mcol_in[7:0]);
+
+assign {sa00_next, sa10_next, sa20_next, sa30_next}  = mcol_arry[0];
+assign {sa01_next, sa11_next, sa21_next, sa31_next}  = mcol_arry[1];
+assign {sa02_next, sa12_next, sa22_next, sa32_next}  = mcol_arry[2];
+assign {sa03_next, sa13_next, sa23_next, sa33_next}  = mcol_arry[3];
+
+/**
 assign {sa00_next, sa10_next, sa20_next, sa30_next} = inv_mix_col(sa00_ark,sa10_ark,sa20_ark,sa30_ark);
 assign {sa01_next, sa11_next, sa21_next, sa31_next} = inv_mix_col(sa01_ark,sa11_ark,sa21_ark,sa31_ark);
 assign {sa02_next, sa12_next, sa22_next, sa32_next} = inv_mix_col(sa02_ark,sa12_ark,sa22_ark,sa32_ark);
 assign {sa03_next, sa13_next, sa23_next, sa33_next} = inv_mix_col(sa03_ark,sa13_ark,sa23_ark,sa33_ark);
+***/
 
 ////////////////////////////////////////////////////////////////////
 //
 // Final Text Output
 //
 
-always @(posedge clk) if(nxt_step) text_out[127:120] <= sa00_ark;
-always @(posedge clk) if(nxt_step) text_out[095:088] <= sa01_ark;
-always @(posedge clk) if(nxt_step) text_out[063:056] <= sa02_ark;
-always @(posedge clk) if(nxt_step) text_out[031:024] <= sa03_ark;
-always @(posedge clk) if(nxt_step) text_out[119:112] <= sa10_ark;
-always @(posedge clk) if(nxt_step) text_out[087:080] <= sa11_ark;
-always @(posedge clk) if(nxt_step) text_out[055:048] <= sa12_ark;
-always @(posedge clk) if(nxt_step) text_out[023:016] <= sa13_ark;
-always @(posedge clk) if(nxt_step) text_out[111:104] <= sa20_ark;
-always @(posedge clk) if(nxt_step) text_out[079:072] <= sa21_ark;
-always @(posedge clk) if(nxt_step) text_out[047:040] <= sa22_ark;
-always @(posedge clk) if(nxt_step) text_out[015:008] <= sa23_ark;
-always @(posedge clk) if(nxt_step) text_out[103:096] <= sa30_ark;
-always @(posedge clk) if(nxt_step) text_out[071:064] <= sa31_ark;
-always @(posedge clk) if(nxt_step) text_out[039:032] <= sa32_ark;
-always @(posedge clk) if(nxt_step) text_out[007:000] <= sa33_ark;
+always @(posedge clk) if(done_pre) text_out[127:120] <= sa00_ark;
+always @(posedge clk) if(done_pre) text_out[095:088] <= sa01_ark;
+always @(posedge clk) if(done_pre) text_out[063:056] <= sa02_ark;
+always @(posedge clk) if(done_pre) text_out[031:024] <= sa03_ark;
+always @(posedge clk) if(done_pre) text_out[119:112] <= sa10_ark;
+always @(posedge clk) if(done_pre) text_out[087:080] <= sa11_ark;
+always @(posedge clk) if(done_pre) text_out[055:048] <= sa12_ark;
+always @(posedge clk) if(done_pre) text_out[023:016] <= sa13_ark;
+always @(posedge clk) if(done_pre) text_out[111:104] <= sa20_ark;
+always @(posedge clk) if(done_pre) text_out[079:072] <= sa21_ark;
+always @(posedge clk) if(done_pre) text_out[047:040] <= sa22_ark;
+always @(posedge clk) if(done_pre) text_out[015:008] <= sa23_ark;
+always @(posedge clk) if(done_pre) text_out[103:096] <= sa30_ark;
+always @(posedge clk) if(done_pre) text_out[071:064] <= sa31_ark;
+always @(posedge clk) if(done_pre) text_out[039:032] <= sa32_ark;
+always @(posedge clk) if(done_pre) text_out[007:000] <= sa33_ark;
 
 ////////////////////////////////////////////////////////////////////
 //
@@ -288,26 +400,9 @@ endfunction
 //
 
 reg	[127:0]	kb[10:0];
-reg	[3:0]	kcnt;
-reg		kb_ld;
 
-always @(posedge clk)
-	if(!rstn)	kcnt <= #1 4'ha;
-	else
-	if(kld)		kcnt <= #1 4'ha;
-	else
-	if(kb_ld & key_rdy)	kcnt <= #1 kcnt - 4'h1;
-
-always @(posedge clk)
-	if(!rstn)	kb_ld <= #1 1'b0;
-	else
-	if(kld)		kb_ld <= #1 1'b1;
-	else
-	if((kcnt==4'h0) && key_rdy)	kb_ld <= #1 1'b0;
-
-always @(posedge clk)	kdone <= #1 (kcnt==4'h0) & key_rdy;
-always @(posedge clk)	if(kb_ld & key_rdy) kb[kcnt] <= #1 {wk3, wk2, wk1, wk0};
-always @(posedge clk)	{w3, w2, w1, w0} <= #1 kb[dcnt];
+always @(posedge clk)	if(active_k && key_rdy)   kb[kcnt] <= {wk3, wk2, wk1, wk0};
+always @(posedge clk)	if(dcnt != 4'hb)          {w3, w2, w1, w0} <= kb[dcnt];
 
 ////////////////////////////////////////////////////////////////////
 //
@@ -334,15 +429,9 @@ reg [7:0] sbox_arry[0:15];
 reg [7:0] sbox_in;
 reg [7:0] sbox_out;
 
-always @(posedge clk or negedge rstn)
+always @(posedge clk)
 begin
-  if(!rstn) begin
-     scnt <= 'h0;
-  end else begin
-     if(ld_r) scnt  <= 'h0;
-     else if(active && !nxt_step)  scnt  <= scnt+1;
-     sbox_arry[scnt] <=  sbox_out;
-  end
+     if(active_s) sbox_arry[scnt] <=  sbox_out;
 end
 
 always_comb
