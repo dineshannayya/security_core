@@ -88,6 +88,11 @@
 `define CFG_DEC_TEXT_OUT_DW2 32'h6C 
 `define CFG_DEC_TEXT_OUT_DW3 32'h70 
 
+`ifdef GL
+     `define USE_POWER_PINS
+     `define UNIT_DELAY #0.1
+`endif
+
 module tb_top;
 
 reg		clk;
@@ -107,27 +112,25 @@ reg         test_fail;
 
 
 // Wishbone Interface
-reg            wbd_ext_cyc_i ;  // strobe/request
-reg            wbd_ext_stb_i ;  // strobe/request
-reg [31:0]     wbd_ext_adr_i ;  // address
-reg            wbd_ext_we_i  ;  // write
-reg [31:0]     wbd_ext_dat_i ;  // data output
-reg [3:0]      wbd_ext_sel_i ;  // byte enable
+reg            dmem_req;  
+reg            dmem_cmd;  
+reg [1:0]      dmem_width;  
+reg [31:0]     dmem_addr;  
+reg [31:0]     dmem_wdata;  
 
-wire [31:0]    wbd_ext_dat_o ;  // data input
-wire           wbd_ext_ack_o ;  // acknowlegement
-wire           wbd_ext_err_o ;  // error
+wire [31:0]    dmem_rdata;  
+wire [1:0]     dmem_resp;  
+wire           dmem_req_ack; 
 
 always #5 clk = ~clk;
 
 initial
    begin
-    wbd_ext_cyc_i ='h0;  // strobe/request
-    wbd_ext_stb_i ='h0;  // strobe/request
-    wbd_ext_adr_i ='h0;  // address
-    wbd_ext_we_i  ='h0;  // write
-    wbd_ext_dat_i ='h0;  // data output
-    wbd_ext_sel_i ='h0;  // byte enable
+    dmem_req ='h0;  
+    dmem_cmd ='h0;  
+    dmem_width ='h0;  
+    dmem_addr  ='h0;  
+    dmem_wdata ='h0;  
     test_fail     = 0;
 	clk = 0;
 	rstn = 0;
@@ -430,9 +433,11 @@ initial
     tv[281]= 384'h00000000000000000000000000000000fffffffffffffffffffffffffffffffc39bde67d5c8ed8a8b1c37eb8fa9f5ac0;
     tv[282]= 384'h00000000000000000000000000000000fffffffffffffffffffffffffffffffe5c005e72c1418c44f569f2ea33ba54f3;
     tv[283]= 384'h00000000000000000000000000000000ffffffffffffffffffffffffffffffff3f5b8cc9ea855a0afa7347d23e8d664e;
+    // Key: "Dinesh   Annayya" and Plain Tex: "riscduino  score"
+    tv[284]= 384'h44696e657368202020416e6e61797961726973636475696e6f202073636f726511d8aaeef9228e95f69e91c1208a0049;  
 
 
-    for(n=0;n<284;n=n+1) begin
+    for(n=0;n<285;n=n+1) begin
         run_aes(n);
 	    @(posedge clk);
    end
@@ -477,26 +482,26 @@ begin
   //------------------------------------
   // Testing Encription Logic
   //-----------------------------------
-   wb_user_core_write(`CFG_ENC_KEY_DW0,key);
-   wb_user_core_write(`CFG_ENC_KEY_DW1,key >> 32);
-   wb_user_core_write(`CFG_ENC_KEY_DW2,key >> 64);
-   wb_user_core_write(`CFG_ENC_KEY_DW3,key >> 96);
+   dmem_write(`CFG_ENC_KEY_DW0,key);
+   dmem_write(`CFG_ENC_KEY_DW1,key >> 32);
+   dmem_write(`CFG_ENC_KEY_DW2,key >> 64);
+   dmem_write(`CFG_ENC_KEY_DW3,key >> 96);
 		
-   wb_user_core_write(`CFG_ENC_TEXT_IN_DW0,enc_text_in);
-   wb_user_core_write(`CFG_ENC_TEXT_IN_DW1,enc_text_in >> 32);
-   wb_user_core_write(`CFG_ENC_TEXT_IN_DW2,enc_text_in >> 64);
-   wb_user_core_write(`CFG_ENC_TEXT_IN_DW3,enc_text_in >> 96);
+   dmem_write(`CFG_ENC_TEXT_IN_DW0,enc_text_in);
+   dmem_write(`CFG_ENC_TEXT_IN_DW1,enc_text_in >> 32);
+   dmem_write(`CFG_ENC_TEXT_IN_DW2,enc_text_in >> 64);
+   dmem_write(`CFG_ENC_TEXT_IN_DW3,enc_text_in >> 96);
 
-   wb_user_core_write(`CFG_ENC_CMD,'h1);
+   dmem_write(`CFG_ENC_CMD,'h1);
 
    read_data = 1;
    while(read_data  != 'h0) begin // Wait Hardware Busy Removal
-      wb_user_core_read(`CFG_ENC_CMD,read_data);
+      dmem_read(`CFG_ENC_CMD,read_data);
    end
-   wb_user_core_read(`CFG_ENC_TEXT_OUT_DW0,enc_text_out[31:0]);
-   wb_user_core_read(`CFG_ENC_TEXT_OUT_DW1,enc_text_out[63:32]);
-   wb_user_core_read(`CFG_ENC_TEXT_OUT_DW2,enc_text_out[95:64]);
-   wb_user_core_read(`CFG_ENC_TEXT_OUT_DW3,enc_text_out[127:96]);
+   dmem_read(`CFG_ENC_TEXT_OUT_DW0,enc_text_out[31:0]);
+   dmem_read(`CFG_ENC_TEXT_OUT_DW1,enc_text_out[63:32]);
+   dmem_read(`CFG_ENC_TEXT_OUT_DW2,enc_text_out[95:64]);
+   dmem_read(`CFG_ENC_TEXT_OUT_DW3,enc_text_out[127:96]);
 
 	if(enc_text_out != ciph | (|enc_text_out)==1'bx)
     begin
@@ -510,26 +515,26 @@ begin
   // Testing Decryption Logic
   //-----------------------------------
 
-   wb_user_core_write(`CFG_DEC_KEY_DW0,key);
-   wb_user_core_write(`CFG_DEC_KEY_DW1,key >> 32);
-   wb_user_core_write(`CFG_DEC_KEY_DW2,key >> 64);
-   wb_user_core_write(`CFG_DEC_KEY_DW3,key >> 96);
+   dmem_write(`CFG_DEC_KEY_DW0,key);
+   dmem_write(`CFG_DEC_KEY_DW1,key >> 32);
+   dmem_write(`CFG_DEC_KEY_DW2,key >> 64);
+   dmem_write(`CFG_DEC_KEY_DW3,key >> 96);
 		
-   wb_user_core_write(`CFG_DEC_TEXT_IN_DW0,enc_text_out);
-   wb_user_core_write(`CFG_DEC_TEXT_IN_DW1,enc_text_out >> 32);
-   wb_user_core_write(`CFG_DEC_TEXT_IN_DW2,enc_text_out >> 64);
-   wb_user_core_write(`CFG_DEC_TEXT_IN_DW3,enc_text_out >> 96);
+   dmem_write(`CFG_DEC_TEXT_IN_DW0,enc_text_out);
+   dmem_write(`CFG_DEC_TEXT_IN_DW1,enc_text_out >> 32);
+   dmem_write(`CFG_DEC_TEXT_IN_DW2,enc_text_out >> 64);
+   dmem_write(`CFG_DEC_TEXT_IN_DW3,enc_text_out >> 96);
 
-   wb_user_core_write(`CFG_DEC_CMD,'h1);
+   dmem_write(`CFG_DEC_CMD,'h1);
 
    read_data = 1;
    while(read_data  != 'h0) begin // Wait Hardware Busy Removal
-      wb_user_core_read(`CFG_DEC_CMD,read_data);
+      dmem_read(`CFG_DEC_CMD,read_data);
    end
-   wb_user_core_read(`CFG_DEC_TEXT_OUT_DW0,dec_text_out[31:0]);
-   wb_user_core_read(`CFG_DEC_TEXT_OUT_DW1,dec_text_out[63:32]);
-   wb_user_core_read(`CFG_DEC_TEXT_OUT_DW2,dec_text_out[95:64]);
-   wb_user_core_read(`CFG_DEC_TEXT_OUT_DW3,dec_text_out[127:96]);
+   dmem_read(`CFG_DEC_TEXT_OUT_DW0,dec_text_out[31:0]);
+   dmem_read(`CFG_DEC_TEXT_OUT_DW1,dec_text_out[63:32]);
+   dmem_read(`CFG_DEC_TEXT_OUT_DW2,dec_text_out[95:64]);
+   dmem_read(`CFG_DEC_TEXT_OUT_DW3,dec_text_out[127:96]);
 
 	if(dec_text_out != plain | (|dec_text_out)==1'bx)
 	begin
@@ -544,8 +549,8 @@ endtask
 
 aes_top u_dut (
 `ifdef USE_POWER_PINS
-    input logic                          vccd1,    // User area 1 1.8V supply
-    input logic                          vssd1,    // User area 1 digital ground
+    .vccd1           (1'b1),    // User area 1 1.8V supply
+    .vssd1           (1'b0),    // User area 1 digital ground
 `endif
 
     .mclk            (clk),
@@ -555,40 +560,41 @@ aes_top u_dut (
     .wbd_clk_int     (),
     .wbd_clk_out     (),
 
-    .wbd_stb_i       (wbd_ext_stb_i)  , // strobe/request
-    .wbd_adr_i       (wbd_ext_adr_i[6:0])  , // address
-    .wbd_we_i        (wbd_ext_we_i )  ,  // write
-    .wbd_dat_i       (wbd_ext_dat_i)  , // data output
-    .wbd_sel_i       (wbd_ext_sel_i)  , // byte enable
-    .wbd_dat_o       (wbd_ext_dat_o)  , // data input
-    .wbd_ack_o       (wbd_ext_ack_o) // acknowlegement
+    .dmem_req        (dmem_req     ),
+    .dmem_cmd        (dmem_cmd     ),
+    .dmem_width      (dmem_width   ),
+    .dmem_addr       (dmem_addr[6:0]),
+    .dmem_wdata      (dmem_wdata   ),
+    .dmem_req_ack    (dmem_req_ack ),
+    .dmem_rdata      (dmem_rdata   ),
+    .dmem_resp       (dmem_resp    )
 
 );
 
 //-------------------------------
 // Wishbone Write
 //-------------------------------
-task wb_user_core_write;
+task dmem_write;
 input [31:0] address;
 input [31:0] data;
 begin
   repeat (1) @(posedge clk);
   #1;
-  wbd_ext_adr_i =address;  // address
-  wbd_ext_we_i  ='h1;  // write
-  wbd_ext_dat_i =data;  // data output
-  wbd_ext_sel_i ='hF;  // byte enable
-  wbd_ext_cyc_i ='h1;  // strobe/request
-  wbd_ext_stb_i ='h1;  // strobe/request
-  wait(wbd_ext_ack_o == 1);
-  repeat (1) @(posedge clk);
+  dmem_addr  =address;  // address
+  dmem_cmd   ='h1;      // write
+  dmem_wdata =data;     // data output
+  dmem_width ='b10;     // byte enable
+  dmem_req   ='h1;      // strobe/request
+  wait(dmem_req_ack == 1);
+  repeat (1) @(negedge clk);
+  dmem_req   ='h0;  // strobe/request
+  wait(dmem_resp == 2'b01);
+  repeat (1) @(negedge clk);
   #1;
-  wbd_ext_cyc_i ='h0;  // strobe/request
-  wbd_ext_stb_i ='h0;  // strobe/request
-  wbd_ext_adr_i ='h0;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='h0;  // data output
-  wbd_ext_sel_i ='h0;  // byte enable
+  dmem_addr   ='h0;  
+  dmem_cmd    ='h0;  
+  dmem_wdata  ='h0;  
+  dmem_width  ='h0;  
   //$display("DEBUG WB USER ACCESS WRITE Address : %x, Data : %x",address,data);
   repeat (2) @(posedge clk);
 end
@@ -598,108 +604,35 @@ endtask
 //--------------------------------------
 // Wishbone Read
 //--------------------------------------
-task  wb_user_core_read;
+task  dmem_read;
 input [31:0] address;
 output [31:0] data;
 reg    [31:0] data;
 begin
   repeat (1) @(posedge clk);
   #1;
-  wbd_ext_adr_i =address;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='0;  // data output
-  wbd_ext_sel_i ='hF;  // byte enable
-  wbd_ext_cyc_i ='h1;  // strobe/request
-  wbd_ext_stb_i ='h1;  // strobe/request
-  wait(wbd_ext_ack_o == 1);
+  dmem_addr =address;  
+  dmem_cmd  ='h0;  
+  dmem_wdata ='0;  
+  dmem_width ='b10;  
+  dmem_req   ='h1;    
+  wait(dmem_req_ack == 1);
   repeat (1) @(negedge clk);
-  data  = wbd_ext_dat_o;  
-  repeat (1) @(posedge clk);
+  dmem_req   ='h0;  
+
+  wait(dmem_resp == 2'b01);
+  repeat (1) @(negedge clk);
   #1;
-  wbd_ext_cyc_i ='h0;  // strobe/request
-  wbd_ext_stb_i ='h0;  // strobe/request
-  wbd_ext_adr_i ='h0;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='h0;  // data output
-  wbd_ext_sel_i ='h0;  // byte enable
+  data = dmem_rdata;
+  dmem_addr   ='h0;  
+  dmem_cmd    ='h0;  
+  dmem_wdata  ='h0;  
+  dmem_width  ='h0;  
   //$display("DEBUG WB USER ACCESS READ Address : %x, Data : %x",address,data);
   repeat (2) @(posedge clk);
 end
 endtask
 
-
-//--------------------------------------
-// Wishbone Read and compare
-//--------------------------------------
-task  wb_user_core_read_check;
-input [31:0] address;
-output [31:0] data;
-input [31:0] cmp_data;
-reg    [31:0] data;
-begin
-  repeat (1) @(posedge clk);
-  #1;
-  wbd_ext_adr_i =address;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='0;  // data output
-  wbd_ext_sel_i ='hF;  // byte enable
-  wbd_ext_cyc_i ='h1;  // strobe/request
-  wbd_ext_stb_i ='h1;  // strobe/request
-  wait(wbd_ext_ack_o == 1);
-  repeat (1) @(negedge clk);
-  data  = wbd_ext_dat_o;  
-  repeat (1) @(posedge clk);
-  #1;
-  wbd_ext_cyc_i ='h0;  // strobe/request
-  wbd_ext_stb_i ='h0;  // strobe/request
-  wbd_ext_adr_i ='h0;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='h0;  // data output
-  wbd_ext_sel_i ='h0;  // byte enable
-  if(data !== cmp_data) begin
-     $display("ERROR : WB USER ACCESS READ  Address : 0x%x, Exd: 0x%x Rxd: 0x%x ",address,cmp_data,data);
-     test_fail = 1;
-  end else begin
-     //$display("STATUS: WB USER ACCESS READ  Address : 0x%x, Data : 0x%x",address,data);
-  end
-  repeat (2) @(posedge clk);
-end
-endtask
-
-
-task  wb_user_core_read_cmp;
-input [31:0] address;
-input [31:0] cmp_data;
-reg    [31:0] data;
-begin
-  repeat (1) @(posedge clk);
-  #1;
-  wbd_ext_adr_i =address;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='0;  // data output
-  wbd_ext_sel_i ='hF;  // byte enable
-  wbd_ext_cyc_i ='h1;  // strobe/request
-  wbd_ext_stb_i ='h1;  // strobe/request
-  wait(wbd_ext_ack_o == 1);
-  repeat (1) @(negedge clk);
-  data  = wbd_ext_dat_o;  
-  repeat (1) @(posedge clk);
-  #1;
-  wbd_ext_cyc_i ='h0;  // strobe/request
-  wbd_ext_stb_i ='h0;  // strobe/request
-  wbd_ext_adr_i ='h0;  // address
-  wbd_ext_we_i  ='h0;  // write
-  wbd_ext_dat_i ='h0;  // data output
-  wbd_ext_sel_i ='h0;  // byte enable
-  if(data !== cmp_data) begin
-     $display("ERROR : WB USER ACCESS READ  Address : 0x%x, Exd: 0x%x Rxd: 0x%x ",address,cmp_data,data);
-     test_fail = 1;
-  end else begin
-     //$display("STATUS: WB USER ACCESS READ  Address : 0x%x, Data : 0x%x",address,data);
-  end
-  repeat (2) @(posedge clk);
-end
-endtask
 
 endmodule
 

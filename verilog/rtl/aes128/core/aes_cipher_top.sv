@@ -246,8 +246,7 @@ logic [31:0] mbox_out;
 
 always @(posedge clk)
 begin
-    if(active_m)
-       mbox_arry[mcnt] <=  mbox_out;
+   mbox_arry[mcnt] <=  mbox_out;
 end
 
 always_comb
@@ -361,7 +360,6 @@ reg [7:0] sbox_out;
 
 always @(posedge clk)
 begin
-    if(active_s)
      sbox_arry[scnt] <=  sbox_out;
 end
 

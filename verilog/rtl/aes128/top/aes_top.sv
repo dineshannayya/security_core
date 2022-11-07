@@ -38,9 +38,22 @@
             2. To reduce the design area of the aes_cipher and aes_inv_cipher
                A. aes_sbox used sequentially for 16 cycle for text compuation 
                B. 4 cycle for next round key computation
+     0.2 - Nov 7, 2022
+           Change the Reg I/F to DMEM interface for better RISCV core integration
            
                                                               
 ************************************************************************************/
+/************************************************************************************
+  ECB Mode : ECB mode is the simplest block cipher mode of operation in existence.  
+    Its approach to multi-block plaintexts is to treat each block of the plaintext separately.
+    encryption/decryption of one block has no effect on the encryption/decryption of any other. 
+
+  CBC Mode : CBC mode eliminates this problem by carrying information from the encryption or 
+    decryption of one block to the next.
+
+
+**************************************************************************************/
+
 
 module aes_top #( parameter WB_WIDTH = 32) (
 `ifdef USE_POWER_PINS
@@ -55,43 +68,45 @@ module aes_top #( parameter WB_WIDTH = 32) (
     input  logic                         wbd_clk_int,
     output logic                         wbd_clk_out,
 
-    input  logic                         wbd_stb_i, // strobe/request
-    input  logic   [6:0]                 wbd_adr_i, // address
-    input  logic                         wbd_we_i,  // write
-    input  logic   [WB_WIDTH-1:0]        wbd_dat_i, // data output
-    input  logic   [3:0]                 wbd_sel_i, // byte enable
-    output logic   [WB_WIDTH-1:0]        wbd_dat_o, // data input
-    output logic                         wbd_ack_o  // acknowlegement
-
+    input   logic                        dmem_req,
+    input   logic                        dmem_cmd,
+    input   logic [1:0]                  dmem_width,
+    input   logic [6:0]                  dmem_addr,
+    input   logic [31:0]                 dmem_wdata,
+    output  logic                        dmem_req_ack,
+    output  logic [31:0]                 dmem_rdata,
+    output  logic [1:0]                  dmem_resp
 );
 
 
-logic [31:0]  reg_rdata_enc;
-logic [31:0]  reg_rdata_decr;
-logic         reg_enc;
-logic         reg_decr;
+logic         dmem_req_ack_enc;
+logic [31:0]  dmem_rdata_enc;
+logic [1:0]   dmem_resp_enc;
+
+logic         dmem_req_ack_decr;
+logic [31:0]  dmem_rdata_decr;
+logic [1:0]   dmem_resp_decr;
 
 
 // Encription local variable
-logic         cfg_enc_ld;                   
-logic         enc_done ;                    
-logic [127:0] cfg_enc_key;
-logic [127:0] cfg_enc_text_in;
-logic [127:0] enc_text_out;
+logic         cfg_enc_ld      ;                   
+logic         enc_done        ;                    
+logic [127:0] cfg_enc_key     ;
+logic [127:0] cfg_enc_text_in ;
+logic [127:0] enc_text_out    ;
 
 // Decryption local variable
-logic         cfg_decr_kld;                
-logic         decr_done   ;                
-logic [127:0] cfg_decr_key;                
+logic         cfg_decr_kld    ;                
+logic         decr_done       ;                
+logic [127:0] cfg_decr_key    ;                
 logic [127:0] cfg_decr_text_in;            
-logic [127:0] decr_text_out;               
+logic [127:0] decr_text_out   ;               
 
 
-assign reg_enc  = wbd_stb_i & (wbd_adr_i[6] == 1'b0);
-assign reg_decr = wbd_stb_i & (wbd_adr_i[6] == 1'b1);
+assign dmem_req_ack = dmem_req_ack_enc | dmem_req_ack_decr;
 
-assign wbd_dat_o = (reg_enc) ? reg_rdata_enc : (reg_decr) ? reg_rdata_decr : 'h0;
-assign wbd_ack_o = (reg_enc) ? reg_ack_enc   : (reg_decr) ? reg_ack_decr   : 'h0;
+assign dmem_rdata =  (dmem_resp_enc == 2'b01) ? dmem_rdata_enc : (dmem_resp_decr == 2'b01) ? dmem_rdata_decr : 'h0;
+assign dmem_resp  = ((dmem_resp_enc == 2'b01) || (dmem_resp_decr == 2'b01)) ? 2'b01: 2'b00;
 
 //###################################
 // Clock Skey for WB clock
@@ -125,13 +140,16 @@ aes_reg u_enc_reg(
         .mclk                           (mclk                         ),
         .rst_n                          (rst_ss_n                     ),
 
-        .reg_cs                         (reg_enc                      ), // strobe/request
-        .reg_addr                       (wbd_adr_i[5:2]               ), // address
-        .reg_wr                         (wbd_we_i                     ), // write
-        .reg_wdata                      (wbd_dat_i                    ), // data output
-        .reg_be                         (wbd_sel_i                    ), // byte enable
-        .reg_rdata                      (reg_rdata_enc                ), // data input
-        .reg_ack                        (reg_ack_enc                  ), // acknowlegement
+        .cfg_port_id                    (1'b0                         ),
+
+        .dmem_req                       (dmem_req                     ), 
+        .dmem_cmd                       (dmem_cmd                     ), 
+        .dmem_width                     (dmem_width                   ), 
+        .dmem_addr                      (dmem_addr                    ), 
+        .dmem_wdata                     (dmem_wdata                   ), 
+        .dmem_req_ack                   (dmem_req_ack_enc             ), 
+        .dmem_rdata                     (dmem_rdata_enc               ), 
+        .dmem_resp                      (dmem_resp_enc                ), 
 
       // Encription Reg Interface
         .cfg_aes_ld                     (cfg_enc_ld                   ),
@@ -163,13 +181,16 @@ aes_reg u_decr_reg(
         .mclk                           (mclk                         ),
         .rst_n                          (rst_ss_n                     ),
 
-        .reg_cs                         (reg_decr                     ), // strobe/request
-        .reg_addr                       (wbd_adr_i[5:2]               ), // address
-        .reg_wr                         (wbd_we_i                     ), // write
-        .reg_wdata                      (wbd_dat_i                    ), // data output
-        .reg_be                         (wbd_sel_i                    ), // byte enable
-        .reg_rdata                      (reg_rdata_decr               ), // data input
-        .reg_ack                        (reg_ack_decr                 ), // acknowlegement
+        .cfg_port_id                    (1'b1                         ),
+
+        .dmem_req                       (dmem_req                     ), 
+        .dmem_cmd                       (dmem_cmd                     ), 
+        .dmem_width                     (dmem_width                   ), 
+        .dmem_addr                      (dmem_addr                    ), 
+        .dmem_wdata                     (dmem_wdata                   ), 
+        .dmem_req_ack                   (dmem_req_ack_decr            ), 
+        .dmem_rdata                     (dmem_rdata_decr              ), 
+        .dmem_resp                      (dmem_resp_decr               ), 
 
       // Decription Reg Interface
         .cfg_aes_ld                     (cfg_decr_kld                 ),

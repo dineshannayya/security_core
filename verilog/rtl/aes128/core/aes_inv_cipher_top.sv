@@ -292,9 +292,9 @@ logic [31:0] mcol_out;
 
 always @(posedge clk)
 begin
-   if(active_m)
-      mcol_arry[mcnt] <=  mcol_out;
+   mcol_arry[mcnt] <=  mcol_out;
 end
+
 always_comb
 begin
   mcol_in = 0;
@@ -401,8 +401,8 @@ endfunction
 
 reg	[127:0]	kb[10:0];
 
-always @(posedge clk)	if(active_k && key_rdy)   kb[kcnt] <= {wk3, wk2, wk1, wk0};
-always @(posedge clk)	if(dcnt != 4'hb)          {w3, w2, w1, w0} <= kb[dcnt];
+always @(posedge clk)	if(key_rdy)       kb[kcnt] <= {wk3, wk2, wk1, wk0};
+always @(posedge clk)	if(dcnt != 4'hb)  {w3, w2, w1, w0} <= kb[dcnt];
 
 ////////////////////////////////////////////////////////////////////
 //

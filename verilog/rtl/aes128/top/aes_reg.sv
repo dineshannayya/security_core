@@ -35,16 +35,20 @@
 ************************************************************************************/
 
 module aes_reg (
-        input  logic           mclk                    ,
-        input  logic           rst_n                   ,
+        input  logic           mclk                             ,
+        input  logic           rst_n                            ,
 
-        input  logic           reg_cs                  , // strobe/request
-        input  logic [3:0]     reg_addr                , // address
-        input  logic           reg_wr                  , // write
-        input  logic [31:0]    reg_wdata               , // data output
-        input  logic [3:0]     reg_be                  , // byte enable
-        output logic [31:0]    reg_rdata               , // data input
-        output logic           reg_ack                 , // acknowlegement
+        input   logic          cfg_port_id,
+
+        input   logic          dmem_req,
+        input   logic          dmem_cmd,
+        input   logic [1:0]    dmem_width,
+        input   logic [6:0]    dmem_addr,
+        input   logic [31:0]   dmem_wdata,
+        output  logic          dmem_req_ack,
+        output  logic [31:0]   dmem_rdata,
+        output  logic [1:0]    dmem_resp,
+
 
       // Encription Reg Interface
         output  logic          cfg_aes_ld              ,
@@ -60,6 +64,7 @@ module aes_reg (
 // Internal Wire Declarations
 //-----------------------------------------------------------------------
 
+logic          sw_cs           ;
 logic          sw_rd_en        ;
 logic          sw_wr_en        ;
 logic [3:0]    sw_addr         ; 
@@ -83,47 +88,97 @@ logic [31:0]   reg_12          ;
 logic          cfg_aes_req     ;
 logic          cfg_aes_req_l   ;
 
+//Generate Byte Select
+function automatic logic[3:0] conv_bsel (
+    input   logic [1:0] hwidth,
+    input   logic [1:0] haddr
+);
+    logic   [3:0]  bsel;
+begin
+    bsel = 'x;
+    case (hwidth)
+        2'b00 : begin
+            case (haddr)
+                2'b00 : bsel     = 4'b0001;
+                2'b01 : bsel     = 4'b0010;
+                2'b10 : bsel     = 4'b0100;
+                2'b11 : bsel     = 4'b1000;
+            endcase
+        end
+        2'b01 : begin
+            case (haddr[1])
+                1'b0 : bsel      = 4'b0011;
+                1'b1 : bsel      = 4'b1100;
+            endcase
+        end
+        2'b10 : begin
+            bsel      = 4'b1111;
+        end
+        default : begin
+        end
+    endcase
+    conv_bsel = bsel;
+end
+endfunction
 
-assign       sw_addr       = reg_addr;
-assign       sw_rd_en      = reg_cs & !reg_wr;
-assign       sw_wr_en      = reg_cs & reg_wr;
-assign       sw_be         = reg_be;
-assign       sw_reg_wdata  = reg_wdata;
+
+always_ff @(negedge rst_n, posedge mclk) begin
+    if (~rst_n) begin
+       sw_cs          <= '0;
+       dmem_req_ack   <= '0;
+       sw_rd_en       <= '0;
+       sw_wr_en       <= '0;
+       sw_addr        <= '0;
+       sw_be          <= '0;
+       sw_reg_wdata   <= '0;
+    end else begin
+       sw_cs          <= (dmem_req) && (dmem_req_ack == 0) &&  (dmem_addr[6] == cfg_port_id);
+       dmem_req_ack   <= dmem_req & (dmem_req_ack ==0) & (dmem_addr[6] == cfg_port_id);
+       sw_rd_en       <= (dmem_cmd == 0);
+       sw_wr_en       <= (dmem_cmd == 1);
+       sw_addr        <= dmem_addr[5:2];
+       sw_be          <= conv_bsel(dmem_width,dmem_addr[1:0]);
+       sw_reg_wdata   <= dmem_wdata;
+    end
+end
 
 //-----------------------------------------------------------------------
 // register read enable and write enable decoding logic
 //-----------------------------------------------------------------------
-wire   sw_wr_en_0 = sw_wr_en  & (sw_addr == 4'h0);
-wire   sw_wr_en_1 = sw_wr_en  & (sw_addr == 4'h1);
-wire   sw_wr_en_2 = sw_wr_en  & (sw_addr == 4'h2);
-wire   sw_wr_en_3 = sw_wr_en  & (sw_addr == 4'h3);
-wire   sw_wr_en_4 = sw_wr_en  & (sw_addr == 4'h4);
-wire   sw_wr_en_5 = sw_wr_en  & (sw_addr == 4'h5);
-wire   sw_wr_en_6 = sw_wr_en  & (sw_addr == 4'h6);
-wire   sw_wr_en_7 = sw_wr_en  & (sw_addr == 4'h7);
-wire   sw_wr_en_8 = sw_wr_en  & (sw_addr == 4'h8);
+wire   sw_wr_en_0 = sw_cs & sw_wr_en  & (sw_addr == 4'h0);
+wire   sw_wr_en_1 = sw_cs & sw_wr_en  & (sw_addr == 4'h1);
+wire   sw_wr_en_2 = sw_cs & sw_wr_en  & (sw_addr == 4'h2);
+wire   sw_wr_en_3 = sw_cs & sw_wr_en  & (sw_addr == 4'h3);
+wire   sw_wr_en_4 = sw_cs & sw_wr_en  & (sw_addr == 4'h4);
+wire   sw_wr_en_5 = sw_cs & sw_wr_en  & (sw_addr == 4'h5);
+wire   sw_wr_en_6 = sw_cs & sw_wr_en  & (sw_addr == 4'h6);
+wire   sw_wr_en_7 = sw_cs & sw_wr_en  & (sw_addr == 4'h7);
+wire   sw_wr_en_8 = sw_cs & sw_wr_en  & (sw_addr == 4'h8);
 
-wire   sw_rd_en_0 = sw_rd_en  & (sw_addr == 4'h0);
-wire   sw_rd_en_1 = sw_rd_en  & (sw_addr == 4'h1);
-wire   sw_rd_en_2 = sw_rd_en  & (sw_addr == 4'h2);
-wire   sw_rd_en_3 = sw_rd_en  & (sw_addr == 4'h3);
-wire   sw_rd_en_4 = sw_rd_en  & (sw_addr == 4'h4);
-wire   sw_rd_en_5 = sw_rd_en  & (sw_addr == 4'h5);
-wire   sw_rd_en_6 = sw_rd_en  & (sw_addr == 4'h6);
-wire   sw_rd_en_7 = sw_rd_en  & (sw_addr == 4'h7);
-wire   sw_rd_en_8 = sw_rd_en  & (sw_addr == 4'h8);
+wire   sw_rd_en_0 = sw_cs & sw_rd_en  & (sw_addr == 4'h0);
+wire   sw_rd_en_1 = sw_cs & sw_rd_en  & (sw_addr == 4'h1);
+wire   sw_rd_en_2 = sw_cs & sw_rd_en  & (sw_addr == 4'h2);
+wire   sw_rd_en_3 = sw_cs & sw_rd_en  & (sw_addr == 4'h3);
+wire   sw_rd_en_4 = sw_cs & sw_rd_en  & (sw_addr == 4'h4);
+wire   sw_rd_en_5 = sw_cs & sw_rd_en  & (sw_addr == 4'h5);
+wire   sw_rd_en_6 = sw_cs & sw_rd_en  & (sw_addr == 4'h6);
+wire   sw_rd_en_7 = sw_cs & sw_rd_en  & (sw_addr == 4'h7);
+wire   sw_rd_en_8 = sw_cs & sw_rd_en  & (sw_addr == 4'h8);
+
 
 
 always @ (posedge mclk or negedge rst_n)
 begin : preg_out_Seq
    if (rst_n == 1'b0) begin
-      reg_rdata  <= 'h0;
-      reg_ack    <= 1'b0;
-   end else if (reg_cs && !reg_ack) begin
-      reg_rdata  <= reg_out;
-      reg_ack    <= 1'b1;
+      dmem_resp   <= 2'b00;
+      dmem_rdata  <= 'h0;
+   end else if (sw_cs && sw_rd_en) begin
+      dmem_rdata  <= reg_out;
+      dmem_resp   <= 2'b01;
+   end else if (sw_cs && sw_wr_en) begin
+      dmem_resp <= 2'b01;
    end else begin
-      reg_ack    <= 1'b0;
+      dmem_resp     <= 2'b00;
    end
 end
 
