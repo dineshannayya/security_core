@@ -87,6 +87,8 @@ logic [31:0]   reg_11          ;
 logic [31:0]   reg_12          ; 
 logic          cfg_aes_req     ;
 logic          cfg_aes_req_l   ;
+logic [1:0]    dmem_addr_l     ;
+logic [1:0]    dmem_width_l    ;
 
 //Generate Byte Select
 function automatic logic[3:0] conv_bsel (
@@ -122,6 +124,95 @@ end
 endfunction
 
 
+//Generate wdata based on width and address[1:0]
+function automatic logic[31:0] conv_wdata (
+    input   logic [1:0]     dmem_width,
+    input   logic [1:0]     dmem_addr,
+    input   logic [31:0]    dmem_wdata
+);
+    logic   [31:0]  tmp;
+begin
+    tmp = 'x;
+    case (dmem_width)
+        2'b00 : begin
+            case (dmem_addr)
+                2'b00 : begin
+                   tmp[7:0]   = dmem_wdata[7:0];
+                end
+                2'b01 : begin
+                   tmp[15:8]  = dmem_wdata[7:0];
+                end
+                2'b10 : begin
+                   tmp[23:16] = dmem_wdata[7:0];
+                end
+                2'b11 : begin
+                   tmp[31:24] = dmem_wdata[7:0];
+                end
+                default : begin
+                end
+            endcase
+        end
+        2'b01 : begin
+            case (dmem_addr[1])
+                1'b0 : begin
+                   tmp[15:0]  = dmem_wdata[15:0];
+                end
+                1'b1 : begin
+                   tmp[31:16] = dmem_wdata[15:0];
+                end
+                default : begin
+                end
+            endcase
+        end
+        2'b10 : begin
+            tmp = dmem_wdata;
+        end
+        default : begin
+        end
+    endcase
+    conv_wdata = tmp;
+end
+endfunction
+
+//Generate rdata based on width and address[1:0]
+function automatic logic[31:0] conv_rdata (
+    input   logic [1:0]                 hwidth,
+    input   logic [1:0]                 haddr,
+    input   logic [31:0]  hrdata
+);
+    logic   [31:0]  tmp;
+begin
+    tmp = 'x;
+    case (hwidth)
+        2'b00 : begin
+            case (haddr)
+                2'b00 : tmp[7:0] = hrdata[7:0];
+                2'b01 : tmp[7:0] = hrdata[15:8];
+                2'b10 : tmp[7:0] = hrdata[23:16];
+                2'b11 : tmp[7:0] = hrdata[31:24];
+                default : begin
+                end
+            endcase
+        end
+        2'b01 : begin
+            case (haddr[1])
+                1'b0 : tmp[15:0] = hrdata[15:0];
+                1'b1 : tmp[15:0] = hrdata[31:16];
+                default : begin
+                end
+            endcase
+        end
+        2'b10 : begin
+            tmp = hrdata;
+        end
+        default : begin
+        end
+    endcase
+    conv_rdata = tmp;
+end
+endfunction
+
+
 always_ff @(negedge rst_n, posedge mclk) begin
     if (~rst_n) begin
        sw_cs          <= '0;
@@ -131,14 +222,18 @@ always_ff @(negedge rst_n, posedge mclk) begin
        sw_addr        <= '0;
        sw_be          <= '0;
        sw_reg_wdata   <= '0;
+       dmem_addr_l    <= '0;
+       dmem_width_l    <= '0;
     end else begin
        sw_cs          <= (dmem_req) && (dmem_req_ack == 0) &&  (dmem_addr[6] == cfg_port_id);
        dmem_req_ack   <= dmem_req & (dmem_req_ack ==0) & (dmem_addr[6] == cfg_port_id);
        sw_rd_en       <= (dmem_cmd == 0);
        sw_wr_en       <= (dmem_cmd == 1);
        sw_addr        <= dmem_addr[5:2];
+       dmem_addr_l    <= dmem_addr[1:0];
+       dmem_width_l   <= dmem_width[1:0];
        sw_be          <= conv_bsel(dmem_width,dmem_addr[1:0]);
-       sw_reg_wdata   <= dmem_wdata;
+       sw_reg_wdata   <= conv_wdata(dmem_width,dmem_addr[1:0],dmem_wdata);
     end
 end
 
@@ -173,7 +268,7 @@ begin : preg_out_Seq
       dmem_resp   <= 2'b00;
       dmem_rdata  <= 'h0;
    end else if (sw_cs && sw_rd_en) begin
-      dmem_rdata  <= reg_out;
+      dmem_rdata  <= conv_rdata(dmem_width_l,dmem_addr_l[1:0],reg_out);
       dmem_resp   <= 2'b01;
    end else if (sw_cs && sw_wr_en) begin
       dmem_resp <= 2'b01;
