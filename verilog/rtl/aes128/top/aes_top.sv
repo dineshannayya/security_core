@@ -75,7 +75,9 @@ module aes_top #( parameter WB_WIDTH = 32) (
     input   logic [31:0]                 dmem_wdata,
     output  logic                        dmem_req_ack,
     output  logic [31:0]                 dmem_rdata,
-    output  logic [1:0]                  dmem_resp
+    output  logic [1:0]                  dmem_resp,
+
+    output  logic                        idle        // AES logic idle indication
 );
 
 
@@ -156,7 +158,9 @@ aes_reg u_enc_reg(
         .aes_done                       (enc_done                     ),
         .cfg_key                        (cfg_enc_key                  ),
         .cfg_text_in                    (cfg_enc_text_in              ),
-        .text_out                       (enc_text_out                 )
+        .text_out                       (enc_text_out                 ),
+
+        .idle                           (idle                         )
 
       );
 

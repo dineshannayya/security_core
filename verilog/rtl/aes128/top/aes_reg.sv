@@ -55,7 +55,10 @@ module aes_reg (
         input   logic          aes_done                ,
         output  logic [127:0]  cfg_key                 ,
         output  logic [127:0]  cfg_text_in             ,
-        input   logic [127:0]  text_out                
+        input   logic [127:0]  text_out                ,
+
+
+        output  logic          idle                
 
 
       );
@@ -89,6 +92,13 @@ logic          cfg_aes_req     ;
 logic          cfg_aes_req_l   ;
 logic [1:0]    dmem_addr_l     ;
 logic [1:0]    dmem_width_l    ;
+
+
+//---------------------------------
+// When this is no aes process req
+// aes is consider as idle
+//---------------------------------
+assign idle = !cfg_aes_req;
 
 //Generate Byte Select
 function automatic logic[3:0] conv_bsel (
