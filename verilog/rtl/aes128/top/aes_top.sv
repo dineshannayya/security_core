@@ -81,6 +81,8 @@ module aes_top #( parameter WB_WIDTH = 32) (
 );
 
 
+logic         rst_ss_n;
+
 logic         dmem_req_ack_enc;
 logic [31:0]  dmem_rdata_enc;
 logic [1:0]   dmem_resp_enc;
@@ -103,7 +105,7 @@ logic         decr_done       ;
 logic [127:0] cfg_decr_key    ;                
 logic [127:0] cfg_decr_text_in;            
 logic [127:0] decr_text_out   ;               
-
+logic         decr_kdone      ;
 
 assign dmem_req_ack = dmem_req_ack_enc | dmem_req_ack_decr;
 
