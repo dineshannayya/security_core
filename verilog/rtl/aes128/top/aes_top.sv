@@ -64,7 +64,6 @@ module aes_top #( parameter WB_WIDTH = 32) (
     input  logic                         mclk,
     input  logic                         rst_n,
 
-    input  logic   [3:0]                 cfg_cska,
     input  logic                         wbd_clk_int,
     output logic                         wbd_clk_out,
 
@@ -115,15 +114,14 @@ assign dmem_resp  = ((dmem_resp_enc == 2'b01) || (dmem_resp_decr == 2'b01)) ? 2'
 //###################################
 // Clock Skey for WB clock
 //###################################
-clk_skew_adjust u_skew
+ctech_clk_buf u_skew
        (
 `ifdef USE_POWER_PINS
            .vccd1      (vccd1                      ),// User area 1 1.8V supply
            .vssd1      (vssd1                      ),// User area 1 digital ground
 `endif
-	       .clk_in     (wbd_clk_int                ), 
-	       .sel        (cfg_cska                   ), 
-	       .clk_out    (wbd_clk_out                ) 
+	       .A     (wbd_clk_int                ), 
+	       .X    (wbd_clk_out                ) 
        );
 
 //###################################
